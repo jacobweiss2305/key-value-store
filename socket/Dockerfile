@@ -1,8 +1,11 @@
-# Dockerfile for socket server
+# Dockerfile for Socket Server
 FROM python:3.8
 
 WORKDIR /app
 
-COPY ./main.py ./server.py
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "./server.py"]
+COPY main.py .
+
+CMD ["python", "main.py"]

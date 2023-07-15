@@ -1,43 +1,37 @@
-# In-Memory Key/Value Store with Transactions
+# In-memory key-value datastore using ACID principles:
 
-This server is an in-memory key/value store that supports transactions. The use case for this server is as a high-performance cache. All commands and server responses are encoded as UTF-8 strings.
+## Comparison between FastAPI and Socket
 
-## Setup
+1. FastAPI
+    - FastAPI is based on HTTP protocol, which is a stateless protocol primarily designed for the web.
+    - FastAPI, being based on HTTP, is stateless by nature - each request is processed independently and there's no built-in notion of ongoing sessions.
+    - FastAPI, especially when coupled with an ASGI server like Uvicorn or Hypercorn, can handle thousands of requests concurrently due to its asynchronous nature.
+    - FastAPI comes with a lot of "batteries included" - automatic request and response handling, data validation and serialization, automatic API documentation, dependency injection, etc.
+    - FastAPI, being an HTTP server, can easily be used with any HTTP client - which includes browsers, command-line tools like curl, and countless libraries in all programming languages.
 
-This server requires Python 3.6 or higher. You can check your Python version by running:
+2. Socket
+    - Socket servers typically use the TCP or UDP protocols, which allow for lower-level networking communication.
+    - Socket servers, on the other hand, typically maintain a connection for a period of time, allowing state to be preserved across multiple requests. This stateful nature of socket servers allows them to maintain ongoing transactions, which can be very useful in some scenarios.
+    - A simple implementation of a socket server might only handle one connection at a time per thread. More advanced or customized concurrency models are possible with socket servers, but they require more manual implementation.
+    - Socket servers are more barebones - they give you a lot of control, but you have to implement many things yourself.
+    - Socket servers require a compatible socket client, which can be a bit more involved to set up
 
-```bash
-python --version
-```
+To summarize: FastAPI is great when you're building a web API and you want to get a lot done quickly and correctly, while a socket server might be more suitable for more customized use-cases, lower-level networking needs, or when you need to maintain stateful connections.
 
-## Running the Server
+## Applying ACID principles:
 
-To start the server, navigate to the directory containing the server script and run the following command:
+1. Atomicity:
 
-```bash
-python main.py
-```
+    - Each command received from the client is treated as a single atomic operation. The server ensures that each command is fully completed or has no effect. For example, when a transaction starts or rolls back, it is treated as an atomic operation.
 
-The server will start and listen for connections on localhost port 9999.
+2. Consistency:
 
-## Running the Tests
+    - The server ensures that the data is updated or modified in a consistent manner for each operation. The key-value pairs are stored either in the transaction's data (uncommitted changes) or in the main data store (committed data). When a PUT or DELETE command is received, the server updates the appropriate dictionary (transaction's data or main data store) based on the presence of a transaction ID. When a GET or VIEW command is received, the server retrieves the value from the transaction's data or the main data store based on the presence of a transaction ID.
 
-This repository includes a test script (test.py) that validates the functionality of the server.
+3. Isolation:
 
-Before running the tests, make sure the server is running. Then, in a separate terminal window, navigate to the directory containing test.py and run:
+    - Each transaction's uncommitted changes are stored in a separate dictionary. When a PUT or DELETE command is received within a transaction, the changes are applied to the transaction's data dictionary, ensuring isolation from other transactions. The server maintains the isolation between transactions by using separate dictionaries for each transaction's changes.
 
-```bash
-python test.py
-```
+4. Durability:
 
-This will run the tests and print the results to the terminal.
-
-## Assumptions and Decisions
-
-- The server supports multiple transactions at the same time using thread-local storage.
-
-- If a transaction is not committed or rolled back, its changes will not be visible to other transactions.
-
-- We use Python's built-in socketserver module for the server and socket module for the test client. These modules provide a simple and efficient way to create a socket server and client in Python.
-
-- JSON is used for server responses because it's a widely used data interchange format that can easily be parsed and generated in many programming languages, including Python.
+    - The main data store, which contains the committed data, is saved to a file every time a transaction is committed. The save_data() method writes the main data store to the db.json file, ensuring that the committed changes persist even if the server is restarted.
