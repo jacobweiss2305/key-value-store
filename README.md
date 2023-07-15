@@ -1,4 +1,6 @@
-# In-memory key-value datastore using ACID principles:
+# In-memory key-value datastore using ACID principles
+
+Please review fastapi/README.md and socket/README.md.
 
 ## Comparison between FastAPI and Socket
 
