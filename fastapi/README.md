@@ -2,6 +2,9 @@
 
 This project uses FastAPI to implement a transactional key-value store with ACID properties. FastAPI is a modern, fast (high-performance), web framework for building APIs with Python 3.6+ based on standard Python type hints.
 
+## Concurrency
+This server uses a combination of threading and lock-based synchronization to manage access to shared resources across multiple clients. As such, it is able to handle concurrent requests in a safe way, given certain conditions. It also includes support for transactions, with operations including START, COMMIT, ROLLBACK, PUT, DELETE, GET, and VIEW.
+
 ### Safety Across Operations
 
 #### TLDR;
