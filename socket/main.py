@@ -2,6 +2,7 @@ import socket
 import threading
 import json
 import uuid
+from collections import defaultdict
 
 class TransactionServer:
     def __init__(self, host='localhost', port=12345):
@@ -11,6 +12,7 @@ class TransactionServer:
         self.server.listen()
         self.data = self.load_data()  # Main storage of key-value pairs (committed data)
         self.transactions = {}  # Uncommitted transactions
+        self.key_locks = defaultdict(threading.Lock)  # Lock for each key for synchronization
 
     def load_data(self):
         """Load the main data store from a file."""
@@ -19,12 +21,12 @@ class TransactionServer:
                 return json.load(f)
         except FileNotFoundError:
             return {}
-        
+
     def save_data(self):
         """Save the main data store to a file."""
         with open('db.json', 'w') as f:
             json.dump(self.data, f)
-        
+
     def handle_client(self, client):
         """Handle a client connection."""
         while True:
@@ -38,16 +40,6 @@ class TransactionServer:
     def process_command(self, command):
         """
         Process a command sent by the client and return the response.
-
-        This function is responsible for maintaining the ACID properties:
-            - Atomicity is maintained by treating each command as a single atomic operation and
-              ensuring that it fully completes or has no effect.
-            - Consistency is ensured by updating the transaction's data or the main data store in a
-              consistent manner for each operation.
-            - Isolation is achieved by using a separate dictionary for each transaction's uncommitted
-              changes.
-            - Durability is handled by writing the main data store to a file every time a transaction
-              is committed.
         """
         cmd = command.get('cmd')
         key = command.get('key')
@@ -57,53 +49,92 @@ class TransactionServer:
         if cmd == 'START':
             # Generate a new transaction ID
             transaction_id = str(uuid.uuid4())
-            # Starts a new transaction (Atomicity)
+            # Starts a new transaction
             self.transactions[transaction_id] = {}
             return {'status': 'Ok', 'mesg': 'Transaction started', 'transaction_id': transaction_id}
-        elif cmd == 'COMMIT':
-            # Commit a transaction (Atomicity, Durability)
-            if id in self.transactions:
-                self.data.update(self.transactions.pop(id, {}))
-                self.save_data()  # Durability: save committed changes to a file
-                return {'status': 'Ok', 'mesg': 'Transaction committed'}
-            else:
+
+        elif cmd in ['PUT', 'DELETE']:
+            # Add or delete a key-value pair
+            if not id in self.transactions:
                 return {'status': 'Error', 'mesg': 'Transaction not found'}
+
+            # Always acquire locks in a sorted order to prevent deadlocks
+            keys = sorted(list(self.transactions[id].keys()) + [key])
+            locks = [self.key_locks[k] for k in keys]
+
+            for lock in locks:
+                lock.acquire()
+
+            if cmd == 'PUT':
+                self.transactions[id][key] = value
+                result = {'status': 'Ok', 'mesg': 'Key-value pair added/updated'}
+            else:  # cmd == 'DELETE'
+                if key in self.transactions[id]:
+                    del self.transactions[id][key]
+                result = {'status': 'Ok', 'mesg': 'Key-value pair deleted'}
+
+            # Release locks
+            for lock in reversed(locks):
+                lock.release()
+
+            return result
+
+        elif cmd == 'COMMIT':
+            # Commit a transaction
+            if not id in self.transactions:
+                return {'status': 'Error', 'mesg': 'Transaction not found'}
+
+            # Always acquire locks in a sorted order to prevent deadlocks
+            keys = sorted(self.transactions[id].keys())
+            locks = [self.key_locks[k] for k in keys]
+
+            for lock in locks:
+                lock.acquire()
+
+            self.data.update(self.transactions.pop(id, {}))
+            self.save_data()  # save committed changes to a file
+
+            # Release locks
+            for lock in reversed(locks):
+                lock.release()
+
+            return {'status': 'Ok', 'mesg': 'Transaction committed'}
+
         elif cmd == 'ROLLBACK':
-            # Roll back a transaction (Atomicity)
+            # Roll back a transaction
             if id in self.transactions:
+                keys = self.transactions[id].keys()
+                locks = [self.key_locks[k] for k in keys]
+
+                for lock in locks:
+                    lock.acquire()
+
                 self.transactions.pop(id, None)
+
+                # Release locks
+                for lock in reversed(locks):
+                    lock.release()
+
                 return {'status': 'Ok', 'mesg': 'Transaction rolled back'}
             else:
                 return {'status': 'Error', 'mesg': 'Transaction not found'}
-        elif cmd == 'PUT':
-            # Add or update a key-value pair (Atomicity, Consistency)
-            if id in self.transactions:
-                self.transactions[id][key] = value
-            else:
-                self.data[key] = value
-            return {'status': 'Ok', 'mesg': 'Key-value pair added/updated'}
-        elif cmd == 'DELETE':
-            # Delete a key-value pair (Atomicity, Consistency)
-            if id in self.transactions and key in self.transactions[id]:
-                del self.transactions[id][key]
-            elif key in self.data:
-                del self.data[key]
-            return {'status': 'Ok', 'mesg': 'Key-value pair deleted'}
+
         elif cmd == 'GET':
             # Get the value for a key or retrieve the entire database
             if key:
-                if id in self.transactions and key in self.transactions[id]:
-                    return {'status': 'Ok', 'result': self.transactions[id].get(key)}
-                else:
-                    return {'status': 'Ok', 'result': self.data.get(key)}
+                lock = self.key_locks[key]
+                lock.acquire()
+                result = {'status': 'Ok', 'result': self.data.get(key)}
+                lock.release()
+                return result
             else:
-                return {'status': 'Ok', 'result': self.data}
+                return {'status': 'Error', 'mesg': 'Key not provided'}
+
         elif cmd == 'VIEW':
             # Retrieve and return the entire database
             return {'status': 'Ok', 'result': self.data}
         else:
             return {'status': 'Error', 'mesg': 'Unknown command'}
-
 
     def start(self):
         """Start the server."""

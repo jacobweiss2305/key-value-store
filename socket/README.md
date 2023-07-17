@@ -2,7 +2,45 @@
 
 This project implements a transactional key-value store with ACID properties using raw socket connections in Python. This low-level approach gives more control over the server's behavior but may be more complex than using a high-level framework.
 
-## Running the Server Locally
+## Concurrency
+
+This server uses a combination of threading and lock-based synchronization to manage access to shared resources across multiple clients. As such, it is able to handle concurrent requests in a safe way, given certain conditions. It also includes support for transactions, with operations including START, COMMIT, ROLLBACK, PUT, DELETE, GET, and VIEW.
+
+### Safety Across Operations
+
+#### TLDR;
+
+The server employs key-level locking to handle multiple concurrent transactions on the same keys, and deadlock prevention is achieved by always acquiring locks in a sorted order.
+
+#### Safety mechanisms:
+
+1. Starting a Transaction (START): This operation is safe, as it involves creating a new transaction and adding it to the transactions dictionary using a unique transaction ID. It's safe because Python's built-in data types, like dictionaries, are thread-safe for single operations.
+
+2. Committing a Transaction (COMMIT): This operation removes a transaction from the transactions dictionary and applies its changes to the main data store. It acquires a lock for each key involved in the transaction before updating the main data store and saving it to a file. This lock-based synchronization ensures that data inconsistencies do not arise due to concurrent commits that affect the same keys.
+
+3. Rolling Back a Transaction (ROLLBACK): This operation is also safe as it involves removing a transaction from the transactions dictionary, which is a single, atomic operation. Locks for each key involved in the transaction are acquired and then released after the operation, ensuring no other operations can interfere during the rollback.
+
+4. Adding/Updating a Key-Value Pair (PUT): This operation is thread-safe because it operates on the transaction's isolated copy of the data. When adding or updating a key-value pair, a lock is acquired for the key to prevent race conditions.
+
+5. Deleting a Key-Value Pair (DELETE): Similar to the PUT operation, this operation is thread-safe within a transaction and uses a key-based lock to prevent race conditions when operating on the shared data store.
+
+6. Retrieving a Key-Value Pair (GET, VIEW): These operations are safe because they only involve reading data from the transaction's data or from the main data store. In the case of retrieving from the main data store, a lock is used to ensure a consistent view of the data is provided to the client.
+
+## Maintaining ACID with Transaction ID
+
+Transaction ID was implemented to track and manage transactions. By incorporating Transaction ID we gain the following features:
+
+1. Isolation: In a multi-client environment, each client might be performing multiple operations as part of separate transactions. The transaction ID is what allows the server to keep track of which operations belong to which transaction. This is necessary to ensure that each transaction is isolated from others.
+
+2. Atomicity: The transaction ID allows the server to group several operations together as a single transaction. This is necessary to ensure atomicity, i.e., either all operations in a transaction are performed, or none of them are.
+
+3. Commit or Rollback: The transaction ID is used to specify which transaction should be committed or rolled back. When a client sends a 'COMMIT' or 'ROLLBACK' command, the server uses the transaction ID provided in the command to find the corresponding transaction.
+
+4. Consistency: By using transaction IDs, the server can ensure that only consistent sets of changes (those belonging to a fully committed transaction) are applied to the main data store.
+
+In summary, without a transaction ID, the server would have no way to determine which operations belong to which transaction, making it impossible to provide the ACID guarantees (Atomicity, Consistency, Isolation, Durability) that transactions are supposed to provide.
+
+## How to use
 
 1. Make sure you have Python 3.6+ installed.
 2. Run the server using `python main.py`.

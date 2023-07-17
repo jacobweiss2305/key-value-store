@@ -12,10 +12,10 @@ class TransactionRequest(BaseModel):
 class Database:
     def __init__(self, filename):
         self.data = {}
-        self.temp_data = {}
         self.lock = asyncio.Lock()
         self.filename = filename
         self.active_transactions = {}  # New dictionary for active transactions
+        self.keys_in_use = {}  # New dictionary for keys in use
         self.transaction_counter = 0  # New variable to track the transaction counter
         try:
             with open(filename, "r") as f:
@@ -24,12 +24,14 @@ class Database:
             pass
 
     async def start_transaction(self):
-            async with self.lock:
-                self.transaction_counter += 1  # Increment the transaction counter
-                transaction_id = str(self.transaction_counter)
-                self.active_transactions[transaction_id] = copy.deepcopy(self.data)
-                return {"status": "Ok", "mesg": "Transaction started", "transaction_id": transaction_id}
-            
+        async with self.lock:
+            if self.active_transactions:  # Check if there are any active transactions
+                raise HTTPException(status_code=409, detail="Another transaction is in progress")
+            self.transaction_counter += 1
+            transaction_id = str(self.transaction_counter)
+            self.active_transactions[transaction_id] = copy.deepcopy(self.data)
+            return {"status": "Ok", "mesg": "Transaction started", "transaction_id": transaction_id}
+
     async def commit(self, transaction_id):
         async with self.lock:
             if transaction_id not in self.active_transactions:
@@ -37,6 +39,9 @@ class Database:
             self.data = copy.deepcopy(self.active_transactions[transaction_id])
             with open(self.filename, "w") as f:
                 json.dump(self.data, f)
+            for key in self.active_transactions[transaction_id]:
+                if key in self.keys_in_use:
+                    del self.keys_in_use[key]
             del self.active_transactions[transaction_id]
             return {"status": "Ok", "mesg": "Transaction committed"}
 
@@ -44,22 +49,32 @@ class Database:
         async with self.lock:
             if transaction_id not in self.active_transactions:
                 raise HTTPException(status_code=404, detail="Transaction not found")
+            for key in self.active_transactions[transaction_id]:
+                if key in self.keys_in_use:
+                    del self.keys_in_use[key]
             del self.active_transactions[transaction_id]
             return {"status": "Ok", "mesg": "Transaction rolled back"}
+
 
     async def add_or_update(self, key: str, value: str, transaction_id):
         async with self.lock:
             if transaction_id not in self.active_transactions:
                 raise HTTPException(status_code=404, detail="Transaction not found")
+            if key in self.keys_in_use and self.keys_in_use[key] != transaction_id:
+                raise HTTPException(status_code=409, detail="Key is being used by another transaction")
             self.active_transactions[transaction_id][key] = value
+            self.keys_in_use[key] = transaction_id
             return {"status": "Ok", "mesg": "Key-value pair added/updated"}
 
     async def delete(self, key: str, transaction_id):
         async with self.lock:
             if transaction_id not in self.active_transactions:
                 raise HTTPException(status_code=404, detail="Transaction not found")
+            if key in self.keys_in_use and self.keys_in_use[key] != transaction_id:
+                raise HTTPException(status_code=409, detail="Key is being used by another transaction")
             if key in self.active_transactions[transaction_id]:
                 del self.active_transactions[transaction_id][key]
+                del self.keys_in_use[key]
                 return {"status": "Ok", "mesg": "Key-value pair deleted"}
             else:
                 raise HTTPException(status_code=404, detail="Key not found")
